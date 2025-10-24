@@ -6,11 +6,52 @@ import random
 import re
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
-st.set_page_config(page_title="VerseVault", page_icon="📖", layout="wide")
+# ---- Page config & robust asset handling ----
+APP_DIR = Path(__file__).parent
+ASSETS_DIR = APP_DIR / "assets"
+SPLASH_IMAGE_FILE = "VV_Homepage.png"
+SMALL_LOGO_FILE = "VV_SmallLogo.png"
+SPLASH_IMAGE_PATH = ASSETS_DIR / SPLASH_IMAGE_FILE
+SMALL_LOGO_PATH = ASSETS_DIR / SMALL_LOGO_FILE
 
-SPLASH_IMAGE = "assets/VV_Homepage.png"
-SIDEBAR_LOGO = "assets/VV_SmallLogo.png"
+
+def _read_bytes_safe(path: Path):
+    try:
+        return path.read_bytes() if path.exists() else None
+    except Exception:
+        return None
+
+
+def configure_page():
+    icon_bytes = _read_bytes_safe(SMALL_LOGO_PATH)
+    try:
+        if icon_bytes is not None:
+            st.set_page_config(page_title="VerseVault", page_icon=icon_bytes, layout="wide")
+        else:
+            st.set_page_config(page_title="VerseVault", page_icon="📖", layout="wide")
+    except Exception:
+        # set_page_config may already be called on rerun
+        pass
+
+
+def show_splash():
+    """Render the homepage splash image with a graceful fallback."""
+    img_bytes = _read_bytes_safe(SPLASH_IMAGE_PATH)
+
+    # Optional hosted fallback via secrets
+    splash_url = st.secrets.get("branding", {}).get("splash_url") if hasattr(st, "secrets") else None
+    if img_bytes is not None:
+        st.image(img_bytes, use_container_width=True)
+    elif splash_url:
+        st.image(splash_url, use_container_width=True)
+    else:
+        st.header("Welcome to VerseVault!")
+        st.caption(f"(Splash image missing — expected: {SPLASH_IMAGE_PATH})")
+
+
+configure_page()
 
 @st.cache_resource(show_spinner=False)
 def get_storage():
@@ -28,6 +69,7 @@ def get_storage():
     except Exception:
         pass
     return SQLiteStorage()
+
 
 class SupabaseStorage:
     def __init__(self, client):
@@ -61,6 +103,7 @@ class SupabaseStorage:
     def remove_future(self, id_):
         self.client.table(self.future).delete().eq("id", id_).execute()
 
+
 class SQLiteStorage:
     def __init__(self):
         self.backend = "sqlite"
@@ -93,7 +136,7 @@ class SQLiteStorage:
         self.conn.commit()
 
     def update_verse(self, id_, ref, text, explanation, translation):
-        self.conn.execute("update vv_verses set ref=?, text=?, explanation=?, translation=? where id=?", (ref, text, explanation, translation, id_))
+        self.conn.execute("update vv_verses set ref=?, text=?, explanation=?, translation=? where id= ?", (ref, text, explanation, translation, id_))
         self.conn.commit()
 
     def list_verses(self):
@@ -110,18 +153,24 @@ class SQLiteStorage:
         self.conn.execute("delete from vv_future_verses where id=?", (id_,))
         self.conn.commit()
 
+
 storage = get_storage()
 
 # ---------- SIDEBAR ----------
 with st.sidebar:
-    try:
-        st.image(SIDEBAR_LOGO, use_container_width=True)
-    except Exception:
+    # Sidebar logo with safe-bytes loader
+    logo_bytes = _read_bytes_safe(SMALL_LOGO_PATH)
+    if logo_bytes is not None:
+        st.image(logo_bytes, use_container_width=True)
+    else:
         st.markdown("### VerseVault")
+
     st.markdown("### Welcome to VerseVault!")
     st.caption("Build a personal vault of verses, review them with smart quizzes, and keep Scripture at the center of your week.")
     st.divider()
-    st.markdown(f"**Storage:** {storage.backend.upper()}\n\n(Supabase if secrets provided; otherwise local SQLite.)")
+    st.markdown(f"""**Storage:** {storage.backend.upper()}  
+
+(Supabase if secrets provided; otherwise local SQLite.)""")
     if st.button("Reconnect Supabase", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
@@ -131,7 +180,7 @@ if "entered" not in st.session_state:
     st.session_state.entered = False
 
 if not st.session_state.entered:
-    st.image(SPLASH_IMAGE, use_container_width=True)
+    show_splash()
     if st.button("Enter Vault", type="primary", use_container_width=True):
         st.session_state.entered = True
         st.rerun()
